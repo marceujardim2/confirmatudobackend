@@ -39,8 +39,7 @@ app.post("/confirmar-entrega", async (req, res) => {
     // 🚀 Aqui é onde você coloca o puppeteer atualizado
     const browser = await puppeteer.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      executablePath: puppeteer.executablePath(), // <- caminho automático
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
 
     const page = await browser.newPage();
