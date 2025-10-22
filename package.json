@@ -1,34 +1,35 @@
 {
-  "name": "confirmatudobackend",
+  "name": "confirmatudo-backend",
   "version": "1.0.0",
-  "description": "API ConfirmaTudo - Confirmação automática de entregas iFood e 99Food",
-  "type": "module",
+  "description": "API inteligente de confirmação automática de entregas",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "puppeteer": "^23.3.1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.7"
-  },
-  "engines": {
-    "node": ">=18"
+    "dev": "nodemon server.js",
+    "postinstall": "puppeteer install"
   },
   "keywords": [
     "puppeteer",
     "express",
-    "ifood",
-    "99food",
+    "api",
     "confirmacao",
-    "delivery",
-    "backend"
+    "ifood",
+    "automacao"
   ],
   "author": "Marcéu Jardim",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "puppeteer": "^22.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
 }

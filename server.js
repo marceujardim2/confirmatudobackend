@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: process.env.FRONTEND_URL || "*",
     methods: ["GET", "POST"],
   })
 );
@@ -38,12 +38,20 @@ app.post("/confirmar-entrega", async (req, res) => {
   try {
     const browser = await puppeteer.launch({
       headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-      args: process.env.PUPPETEER_ARGS.split(","),
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-zygote",
+        "--single-process",
+        "--disable-gpu",
+      ],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
     });
 
     const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(60000);
+    page.setDefaultNavigationTimeout(90000);
 
     // Tentativa no iFood
     const ifoodResult = await tentarIfood(page, localizador, codigo);
@@ -66,7 +74,7 @@ app.post("/confirmar-entrega", async (req, res) => {
       message: "Localizador inválido em ambas as plataformas.",
     });
   } catch (error) {
-    console.error("Erro:", error);
+    console.error("❌ Erro geral:", error);
     return res.status(500).json({ error: "Erro ao confirmar entrega." });
   }
 });
@@ -76,14 +84,11 @@ async function tentarIfood(page, localizador, codigo) {
   try {
     await page.goto(process.env.IFOOD_URL, { waitUntil: "networkidle2" });
 
-    // Input de 8 dígitos
     await page.waitForSelector('input[name="locatorNumber"]', { visible: true });
     await page.type('input[name="locatorNumber"]', localizador);
-    await page.click("button[type='submit']"); // botão "Continuar"
-
+    await page.click("button[type='submit']");
     await page.waitForTimeout(3000);
 
-    // Verifica se pediu o código
     const codigoInput = await page.$('input[name="code"]');
     if (codigoInput) {
       await page.type('input[name="code"]', codigo);
@@ -93,7 +98,8 @@ async function tentarIfood(page, localizador, codigo) {
     }
 
     return { success: false };
-  } catch {
+  } catch (error) {
+    console.log("❌ Erro no iFood:", error.message);
     return { success: false };
   }
 }
@@ -105,8 +111,7 @@ async function tentar99(page, localizador, codigo) {
 
     await page.waitForSelector('input[name="locatorNumber"]', { visible: true });
     await page.type('input[name="locatorNumber"]', localizador);
-    await page.click("button"); // "Verificar e continuar"
-
+    await page.click("button");
     await page.waitForTimeout(3000);
 
     const codigoInput = await page.$('input[name="code"]');
@@ -118,11 +123,12 @@ async function tentar99(page, localizador, codigo) {
     }
 
     return { success: false };
-  } catch {
+  } catch (error) {
+    console.log("❌ Erro na 99Food:", error.message);
     return { success: false };
   }
 }
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando em ${process.env.BASE_URL} na porta ${PORT}`);
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
