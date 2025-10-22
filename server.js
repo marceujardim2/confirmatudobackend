@@ -1,74 +1,128 @@
-// server.js
 import express from "express";
 import cors from "cors";
+import puppeteer from "puppeteer";
 import dotenv from "dotenv";
-import rateLimit from "express-rate-limit";
-import { confirmOnIfood, confirmOn99 } from "./integrations/sites.js";
 
 dotenv.config();
-const app = express();
-app.use(cors());
-app.use(express.json());
 
-const limiter = rateLimit({
-  windowMs: 60_000,
-  max: 30,
-});
-app.use(limiter);
+const app = express();
+app.use(express.json());
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL,
+    methods: ["GET", "POST"],
+  })
+);
+
+const PORT = process.env.PORT || 10000;
 
 app.get("/health", (req, res) => {
   res.json({
     status: "online",
     message: "ConfirmaTudo API está rodando!",
     version: "1.0.0",
-    endpoints: { health: "/health", confirmar: "POST /confirmar-entrega" },
+    endpoints: {
+      health: "/health",
+      confirmar: "POST /confirmar-entrega",
+    },
   });
 });
 
-/**
- * POST /confirmar-entrega
- * Body: { localizador: string, codigo: string }
- *
- * O endpoint tenta iFood primeiro; se não aceitar o localizador,
- * tenta 99Food. Retorna o site que aceitou ou erro.
- */
+// 🧠 Função principal de confirmação
 app.post("/confirmar-entrega", async (req, res) => {
+  const { localizador, codigo } = req.body;
+
+  if (!localizador || !codigo)
+    return res.status(400).json({ error: "Localizador e código são obrigatórios" });
+
   try {
-    const { localizador, codigo } = req.body;
-    if (!localizador || !codigo) {
-      return res.status(400).json({ mensagem: "Informe localizador (8 dígitos) e codigo (4 dígitos)." });
-    }
-
-    // normaliza (strings)
-    const loc = String(localizador).trim();
-    const cod = String(codigo).trim();
-
-    // Tentativa iFood
-    const ifoodResult = await confirmOnIfood({ localizador: loc, codigo: cod, env: process.env });
-    if (ifoodResult && ifoodResult.success) {
-      return res.json({ mensagem: ifoodResult.mensagem, plataforma: "iFood", details: ifoodResult.details || null });
-    }
-
-    // Se iFood não aceitou, tenta 99
-    const n99Result = await confirmOn99({ localizador: loc, codigo: cod, env: process.env });
-    if (n99Result && n99Result.success) {
-      return res.json({ mensagem: n99Result.mensagem, plataforma: "99Food", details: n99Result.details || null });
-    }
-
-    // Nenhuma das plataformas aceitou
-    return res.status(400).json({
-      mensagem:
-        ifoodResult?.mensagem ||
-        n99Result?.mensagem ||
-        "Nenhuma plataforma aceitou o localizador/código. Verifique se o localizador e o código estão corretos.",
-      plataforma: "nenhuma",
-      details: { ifood: ifoodResult, n99: n99Result },
+    const browser = await puppeteer.launch({
+      headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+      args: process.env.PUPPETEER_ARGS.split(","),
     });
-  } catch (err) {
-    console.error("Erro /confirmar-entrega:", err);
-    return res.status(500).json({ mensagem: "Erro interno no servidor." });
+
+    const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(60000);
+
+    // Tentativa no iFood
+    const ifoodResult = await tentarIfood(page, localizador, codigo);
+
+    if (ifoodResult.success) {
+      await browser.close();
+      return res.json({ plataforma: "iFood", ...ifoodResult });
+    }
+
+    // Tentativa na 99Food
+    const ninetyResult = await tentar99(page, localizador, codigo);
+    await browser.close();
+
+    if (ninetyResult.success) {
+      return res.json({ plataforma: "99Food", ...ninetyResult });
+    }
+
+    return res.status(404).json({
+      success: false,
+      message: "Localizador inválido em ambas as plataformas.",
+    });
+  } catch (error) {
+    console.error("Erro:", error);
+    return res.status(500).json({ error: "Erro ao confirmar entrega." });
   }
 });
 
-const PORT = Number(process.env.PORT || 3000);
-app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
+// 🧭 Função auxiliar – iFood
+async function tentarIfood(page, localizador, codigo) {
+  try {
+    await page.goto(process.env.IFOOD_URL, { waitUntil: "networkidle2" });
+
+    // Input de 8 dígitos
+    await page.waitForSelector('input[name="locatorNumber"]', { visible: true });
+    await page.type('input[name="locatorNumber"]', localizador);
+    await page.click("button[type='submit']"); // botão "Continuar"
+
+    await page.waitForTimeout(3000);
+
+    // Verifica se pediu o código
+    const codigoInput = await page.$('input[name="code"]');
+    if (codigoInput) {
+      await page.type('input[name="code"]', codigo);
+      await page.click("button[type='submit']");
+      await page.waitForTimeout(4000);
+      return { success: true, message: "Entrega confirmada no iFood!" };
+    }
+
+    return { success: false };
+  } catch {
+    return { success: false };
+  }
+}
+
+// 🧭 Função auxiliar – 99Food
+async function tentar99(page, localizador, codigo) {
+  try {
+    await page.goto(process.env.NINENINE_URL, { waitUntil: "networkidle2" });
+
+    await page.waitForSelector('input[name="locatorNumber"]', { visible: true });
+    await page.type('input[name="locatorNumber"]', localizador);
+    await page.click("button"); // "Verificar e continuar"
+
+    await page.waitForTimeout(3000);
+
+    const codigoInput = await page.$('input[name="code"]');
+    if (codigoInput) {
+      await page.type('input[name="code"]', codigo);
+      await page.click("button");
+      await page.waitForTimeout(4000);
+      return { success: true, message: "Entrega confirmada na 99Food!" };
+    }
+
+    return { success: false };
+  } catch {
+    return { success: false };
+  }
+}
+
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando em ${process.env.BASE_URL} na porta ${PORT}`);
+});
