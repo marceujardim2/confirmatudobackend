@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "*",
+    origin: process.env.FRONTEND_URL,
     methods: ["GET", "POST"],
   })
 );
@@ -36,22 +36,15 @@ app.post("/confirmar-entrega", async (req, res) => {
     return res.status(400).json({ error: "Localizador e código são obrigatórios" });
 
   try {
+    // 🚀 Aqui é onde você coloca o puppeteer atualizado
     const browser = await puppeteer.launch({
       headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-zygote",
-        "--single-process",
-        "--disable-gpu",
-      ],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      executablePath: puppeteer.executablePath(), // <- caminho automático
     });
 
     const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(90000);
+    page.setDefaultNavigationTimeout(60000);
 
     // Tentativa no iFood
     const ifoodResult = await tentarIfood(page, localizador, codigo);
@@ -86,7 +79,8 @@ async function tentarIfood(page, localizador, codigo) {
 
     await page.waitForSelector('input[name="locatorNumber"]', { visible: true });
     await page.type('input[name="locatorNumber"]', localizador);
-    await page.click("button[type='submit']");
+    await page.click("button[type='submit']"); // botão "Continuar"
+
     await page.waitForTimeout(3000);
 
     const codigoInput = await page.$('input[name="code"]');
@@ -98,8 +92,7 @@ async function tentarIfood(page, localizador, codigo) {
     }
 
     return { success: false };
-  } catch (error) {
-    console.log("❌ Erro no iFood:", error.message);
+  } catch {
     return { success: false };
   }
 }
@@ -111,7 +104,8 @@ async function tentar99(page, localizador, codigo) {
 
     await page.waitForSelector('input[name="locatorNumber"]', { visible: true });
     await page.type('input[name="locatorNumber"]', localizador);
-    await page.click("button");
+    await page.click("button"); // "Verificar e continuar"
+
     await page.waitForTimeout(3000);
 
     const codigoInput = await page.$('input[name="code"]');
@@ -123,12 +117,11 @@ async function tentar99(page, localizador, codigo) {
     }
 
     return { success: false };
-  } catch (error) {
-    console.log("❌ Erro na 99Food:", error.message);
+  } catch {
     return { success: false };
   }
 }
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`🚀 Servidor rodando em ${process.env.BASE_URL} na porta ${PORT}`);
 });
