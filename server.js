@@ -1,109 +1,74 @@
+// server.js
 import express from "express";
 import cors from "cors";
-import { confirmarEntregaIFood } from "./integrations/ifood.js";
-import { confirmarEntrega99Food } from "./integrations/ninetyNineFood.js";
+import dotenv from "dotenv";
+import rateLimit from "express-rate-limit";
+import { confirmOnIfood, confirmOn99 } from "./integrations/sites.js";
 
+dotenv.config();
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// CORS LIBERADO PARA TESTES
-app.use(cors({
-  origin: '*',  // Aceita qualquer origem (apenas para desenvolvimento)
-  methods: ['GET', 'POST', 'OPTIONS'],
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
+app.use(cors());
 app.use(express.json());
 
-// Middleware de log
-app.use((req, res, next) => {
-  const timestamp = new Date().toLocaleString('pt-BR');
-  console.log('\n' + '='.repeat(60));
-  console.log(` [${timestamp}] ${req.method} ${req.path}`);
-  console.log(` Origin: ${req.headers.origin || 'Sem origin'}`);
-  console.log(` Body:`, req.body);
-  console.log('='.repeat(60));
-  next();
+const limiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
 });
+app.use(limiter);
 
-app.get("/", (req, res) => {
-  res.json({ 
-    status: "online", 
-    message: "ConfirmaTudo API está rodando! ",
+app.get("/health", (req, res) => {
+  res.json({
+    status: "online",
+    message: "ConfirmaTudo API está rodando!",
     version: "1.0.0",
-    endpoints: {
-      health: "/health",
-      confirmar: "POST /confirmar-entrega"
-    }
+    endpoints: { health: "/health", confirmar: "POST /confirmar-entrega" },
   });
 });
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
+/**
+ * POST /confirmar-entrega
+ * Body: { localizador: string, codigo: string }
+ *
+ * O endpoint tenta iFood primeiro; se não aceitar o localizador,
+ * tenta 99Food. Retorna o site que aceitou ou erro.
+ */
 app.post("/confirmar-entrega", async (req, res) => {
-  const { localizador, codigo } = req.body;
-
-  console.log(`\n Dados recebidos:`);
-  console.log(`   Localizador: ${localizador || 'NÃO ENVIADO'}`);
-  console.log(`   Código: ${codigo || 'NÃO ENVIADO'}`);
-
-  if (!localizador || !codigo) {
-    console.log(` Validação falhou: dados incompletos`);
-    return res.status(400).json({ 
-      sucesso: false,
-      erro: "Informe o localizador e o código." 
-    });
-  }
-
   try {
-    console.log(`\n Iniciando confirmação...`);
-    
-    const [resultadoIfood, resultado99] = await Promise.allSettled([
-      confirmarEntregaIFood(localizador, codigo),
-      confirmarEntrega99Food(localizador, codigo),
-    ]);
-
-    const sucessoIfood = resultadoIfood.status === "fulfilled" && resultadoIfood.value.sucesso;
-    const sucesso99 = resultado99.status === "fulfilled" && resultado99.value.sucesso;
-
-    if (sucessoIfood) {
-      console.log(` [SUCCESS] Confirmado no iFood`);
-      return res.json(resultadoIfood.value);
-    }
-    if (sucesso99) {
-      console.log(` [SUCCESS] Confirmado na 99Food`);
-      return res.json(resultado99.value);
+    const { localizador, codigo } = req.body;
+    if (!localizador || !codigo) {
+      return res.status(400).json({ mensagem: "Informe localizador (8 dígitos) e codigo (4 dígitos)." });
     }
 
-    console.log(` [ERROR] Nenhuma plataforma aceitou`);
-    
-    res.status(400).json({
-      sucesso: false,
-      mensagem: "Nenhuma confirmação foi aceita. Verifique os dados.",
-      detalhes: {
-        ifood: resultadoIfood.reason?.message || "Falhou",
-        ninetyNine: resultado99.reason?.message || "Falhou",
-      },
+    // normaliza (strings)
+    const loc = String(localizador).trim();
+    const cod = String(codigo).trim();
+
+    // Tentativa iFood
+    const ifoodResult = await confirmOnIfood({ localizador: loc, codigo: cod, env: process.env });
+    if (ifoodResult && ifoodResult.success) {
+      return res.json({ mensagem: ifoodResult.mensagem, plataforma: "iFood", details: ifoodResult.details || null });
+    }
+
+    // Se iFood não aceitou, tenta 99
+    const n99Result = await confirmOn99({ localizador: loc, codigo: cod, env: process.env });
+    if (n99Result && n99Result.success) {
+      return res.json({ mensagem: n99Result.mensagem, plataforma: "99Food", details: n99Result.details || null });
+    }
+
+    // Nenhuma das plataformas aceitou
+    return res.status(400).json({
+      mensagem:
+        ifoodResult?.mensagem ||
+        n99Result?.mensagem ||
+        "Nenhuma plataforma aceitou o localizador/código. Verifique se o localizador e o código estão corretos.",
+      plataforma: "nenhuma",
+      details: { ifood: ifoodResult, n99: n99Result },
     });
   } catch (err) {
-    console.error(` [ERROR] Erro no servidor:`, err);
-    res.status(500).json({ 
-      sucesso: false, 
-      mensagem: "Erro no servidor", 
-      erro: err.message 
-    });
+    console.error("Erro /confirmar-entrega:", err);
+    return res.status(500).json({ mensagem: "Erro interno no servidor." });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`\n${'='.repeat(60)}`);
-  console.log(` ConfirmaTudo API rodando na porta ${PORT}`);
-  console.log(` Ambiente: ${process.env.NODE_ENV || 'development'}`);
-  console.log(` CORS: LIBERADO (*)  - Aceita qualquer origem`);
-  console.log(` Iniciado em: ${new Date().toLocaleString('pt-BR')}`);
-  console.log(`${'='.repeat(60)}\n`);
-  console.log(` Aguardando requisições...\n`);
-});
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
